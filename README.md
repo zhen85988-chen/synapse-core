@@ -61,7 +61,7 @@ Afternoon: I decide to open source it. Strip the encryption. Strip the license c
 
 One SQLite file. Your entire digital memory. No cloud subscription. No API keys. No one else's server.
 
-**If this sounds useful — drop a star.** It's 18-year-old code, built in 21 days, battle-tested on 1.4B+ tokens. Every star tells me I'm not the only one who wants his AI to have a memory.
+**If this sounds useful — drop a star.** I'm 18, this is my first real open source project. Every star is someone saying "hey, I want my AI to have a memory too." It's not about clout — it's about knowing I didn't build this for nothing.
 
 ## What Makes It Different
 
@@ -149,7 +149,7 @@ pytest test_memory.py -v
 
 <div align="center">
 
-*Built by an 18-year-old who just wanted his AI to remember his name. If this helped you, a star keeps me building — and helps others find it.*
+*Built by an 18-year-old who just wanted his AI to remember his name. No company, no team, no funding — just a real problem and a lot of late nights. If this helped you, a star keeps me building and helps others find it.*
 
 **[⭐ Star](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Issue](https://github.com/zhen85988-chen/synapse-core/issues)** · **[👀 Watch](https://github.com/zhen85988-chen/synapse-core/watchers)** · **[🔱 Fork](https://github.com/zhen85988-chen/synapse-core/fork)**
 
