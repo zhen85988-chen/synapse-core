@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in Synapse Core, please **do not** open a public issue.
 
-Instead, email the maintainer directly at **zhen85988@outlook.com** with:
+Instead, email the maintainer directly at **zhen85988@gmail.com** with:
 
 - A clear description of the vulnerability
 - Steps to reproduce
