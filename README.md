@@ -149,10 +149,10 @@ pytest test_memory.py -v
 
 <div align="center">
 
-*Built by an 18-year-old who just wanted his AI to remember his name.*
+*Built by an 18-year-old who just wanted his AI to remember his name. If this helped you, a star keeps me building — and helps others find it.*
 
-**[⭐ Star on GitHub](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Report a Bug](https://github.com/zhen85988-chen/synapse-core/issues)** · **[👀 Watch for Updates](https://github.com/zhen85988-chen/synapse-core/watchers)**
+**[⭐ Star](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Issue](https://github.com/zhen85988-chen/synapse-core/issues)** · **[👀 Watch](https://github.com/zhen85988-chen/synapse-core/watchers)** · **[🔱 Fork](https://github.com/zhen85988-chen/synapse-core/fork)**
 
-*If this project helps you, a star keeps me building. One click, zero cost, infinite motivation.*
+*Share it with someone who's tired of AI amnesia. One click, zero cost, infinite motivation.*
 
 </div>
