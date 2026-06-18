@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "synapse-core": {
+      "command": "python",
+      "args": ["synapse-core_mcp.py"],
+      "cwd": "/path/to/synapse-core"
+    }
+  }
+}
