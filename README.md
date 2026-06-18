@@ -45,8 +45,9 @@ Afternoon: I decide to open source it. Strip the encryption. Strip the license c
 
 10:40 PM. GitHub push. Done.
 
-> 19 versions. 37 tests. 35 MCP tools. 1.4 billion tokens processed. 99.2% cache hit rate. $12.45 total spend.
-> One database file. Zero data loss ever.
+> 19 versions. 37 tests. 35 MCP tools. Peak cache hit rate 99.5%.
+> More context, higher hit rate, cheaper per request.
+> One SQLite file. All data stays local. Zero data loss ever.
 
 **And it all started because Claude wouldn't remember my name.**
 
@@ -60,13 +61,13 @@ One SQLite file. Your entire digital memory. No cloud subscription. No API keys.
 
 ## What Makes It Different
 
-**Hand-Rolled BM25 Search** — Zero dependencies. N-gram tokenizer. IDF scoring. Pure Python. Written late at night because "how hard can search be?" (Answer: pretty hard. But it works.)
+**Hand-Rolled BM25 Search, Smarter With Scale** — Zero dependencies. N-gram tokenizer. IDF scoring. Pure Python. The more you use it, the faster it gets — cache hit rate runs 98-99.5% in production. More tokens requested means higher hit rate, lower per-request cost. Written from scratch because "how hard can search be?"
 
 **Social Graph Inference** — Your AI doesn't just store names. It discovers relationships. Two people mentioned in the same conversation? Same hometown? Same class? BFS graph diffusion maps connections you didn't explicitly tell it about.
 
 **Dual-Engine Context Wake-Up** — Explicit entity triggers for things you name. BM25 semantic fallback for things you don't. Mention "that thing last week" and it surfaces the right memory. No keyword guessing.
 
-**Actually Crash-Proof** — SQLite WAL mode. Timestamped hot backups. Git-like snapshots you can roll back to. Automatic P2 garbage collection. Heartbeat-based self-verification. I've run this for months. Zero data loss.
+**Actually Crash-Proof & Fully Local** — SQLite WAL mode. All data stays on your machine. Timestamped hot backups. Git-like snapshots you can roll back to. Automatic P2 garbage collection. Heartbeat-based self-verification. I've run this for months. Zero data loss. No cloud, no API, nobody else's server.
 
 **Built for AI Agents, Not Humans** — This isn't a note app. It's an MCP server. Claude Code and other MCP-compatible agents read and write through 35 tools. The schema is designed for AI access patterns, not for pretty UIs.
 
