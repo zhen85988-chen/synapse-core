@@ -18,17 +18,37 @@ Every session starts blank. You tell Claude your name, your projects, your frien
 
 I got sick of this. So I built Synapse Core.
 
-## The Story
+## How It Was Built
 
-I'm an 18-year-old embedded systems student at a vocational college in Wuhan. I use Claude Code during evening self-study sessions. The student council patrols the classrooms and bans phones — but laptops are fine. So I sit there, Claude Code open in the terminal, looking like I'm debugging C code while actually chatting about life, projects, and random bullshit.
+### Day 1 (May 29) — "Claude keeps forgetting my name"
+Every new session, Claude has no idea who I am. Name, projects, friends — gone. So I start throwing notes into markdown files. Manually. 14 files. MEMORY.md for the index, gaming.md for games, people.md for friends. It works. Barely.
 
-Problem was: every time I closed the laptop, Claude forgot everything. I had to reintroduce myself every single night. Name. Major. That I'm learning ESP32. That my grandpa is recovering from a stroke. That I have a competition deadline coming up. That I rage-quit League of Legends again.
+### Week 1 — "Where did I put that thing?"
+The markdown pile grows. Same fact in two places. Search means grepping file names. I forget which file has what. Claude reads the wrong one. Wrong answer, wasted tokens.
 
-So I wrote Synapse Core. Not because I wanted to build a memory system. Because I was annoyed.
+### June 1 — "Ok fine, I'll give the system rules"
+I write a bootstrap procedure into CLAUDE.md. On every session, Claude auto-reads MEMORY.md, scans entity triggers, pulls the right context. It's better. But now I have two problems: the rules say "read markdown" AND "query the database." Two masters, both yelling. Claude freezes. I get silence instead of answers.
 
-Started as a bunch of markdown files. Grew into a Python script. Then a SQLite database. Then BM25 semantic search (wrote it from scratch — no numpy, no dependencies, just me and the N-gram math at 2 AM). Added relationship graph inference. Added 35 MCP tools. Five major rewrites later, here we are.
+### June 3 — "What if I lose everything?"
+I run disaster recovery drills: delete CLAUDE.md, corrupt quick_ref, nuke a new file. All three scenarios pass. Heartbeat timers deployed (10 rounds + 20 minute fallback). Rename everything to v4.0. I think I'm done. I am not done.
 
-**This is the system that runs my life.** It tracks my mood, my embedded projects, my 555 timer chip competition, my game progress, my friends, my daily rants about the student council. It works. It hasn't lost a byte of my data. And now it's yours.
+### June 14 — "Screw markdown. SQLite."
+Three AM. Fed up. I rip out all 14 markdown files and replace them with one SQLite database + one Python CLI. 19 tables of schema. WAL mode. `memory_mood`, `memory_heartbeat`, `memory_startup` — no more "go read file X," just "tell me what you want and I'll give you the answer." 573 lines of Python. It flies. Markdown → SQLite in one night.
+
+### June 15 — "AI agents loop themselves to death"
+Claude starts calling search tools in cycles. 6 searches for the same thing. Token burn. So I build a rate limiter. SQLite-persistent. Survives restarts. Detects loops. Circuit breaker. Search once, answer once. Ship it as v5.3.
+
+### June 18 — "This tumor has to go" + open source
+Morning: I realize the old markdown rules still live in CLAUDE.md, silently fighting the new MCP commands. That's why Claude freezes mid-conversation. I surgically remove every dead rule. 35 tests go green.
+
+Afternoon: I decide to open source it. Strip the encryption. Strip the license codes. Strip my personal paths. 37 tests, 35 MCP tools, zero broken references. Swap the license from MIT to GPL v3 — use it, love it, but if you close-source it, you publish your changes.
+
+10:40 PM. GitHub push. Done.
+
+> 19 versions. 37 tests. 35 MCP tools. 1.4 billion tokens processed. 99.2% cache hit rate. $12.45 total spend.
+> One database file. Zero data loss ever.
+
+**And it all started because Claude wouldn't remember my name.**
 
 ## Why Synapse Core?
 
@@ -124,7 +144,7 @@ pytest test_memory.py -v
 
 <div align="center">
 
-*Built in a Wuhan dorm room by an 18-year-old who just wanted his AI to remember his name.*
+*Built by an 18-year-old who just wanted his AI to remember his name.*
 
 **[⭐ Star on GitHub](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Report a Bug](https://github.com/zhen85988-chen/synapse-core/issues)**
 
