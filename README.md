@@ -2,6 +2,8 @@
 
 <div align="center">
 
+![Synapse Core Cover](cover.png)
+
 **Your AI's permanent brain. No cloud. No accounts. Just one file.**
 
 *Every conversation, every mood, every project — remembered forever.*
