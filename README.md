@@ -47,7 +47,7 @@ Afternoon: I decide to open source it. Strip the encryption. Strip the license c
 
 10:40 PM. GitHub push. Done.
 
-> 19 versions. 37 tests. 35 MCP tools. Peak cache hit rate 99.5%.
+> 19 versions. 37 tests. 35 MCP tools. Cache hit rate 97-99%.
 > More context, higher hit rate, cheaper per request.
 > One SQLite file. All data stays local. Zero data loss ever.
 
@@ -65,7 +65,7 @@ One SQLite file. Your entire digital memory. No cloud subscription. No API keys.
 
 ## What Makes It Different
 
-**Hand-Rolled BM25 Search, Smarter With Scale** — Zero dependencies. N-gram tokenizer. IDF scoring. Pure Python. The more you use it, the faster it gets — cache hit rate runs 98-99.5% in production. More tokens requested means higher hit rate, lower per-request cost. Written from scratch because "how hard can search be?"
+**Hand-Rolled BM25 Search, Smarter With Scale** — Zero dependencies. N-gram tokenizer. IDF scoring. Pure Python. The more you use it, the faster it gets — cache hit rate runs 97-99% in production. More context = higher hit rate = cheaper per request. Written from scratch because "how hard can search be?"
 
 **Social Graph Inference** — Your AI doesn't just store names. It discovers relationships. Two people mentioned in the same conversation? Same hometown? Same class? BFS graph diffusion maps connections you didn't explicitly tell it about.
 
