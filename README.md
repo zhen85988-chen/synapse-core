@@ -59,6 +59,8 @@ Afternoon: I decide to open source it. Strip the encryption. Strip the license c
 
 One SQLite file. Your entire digital memory. No cloud subscription. No API keys. No one else's server.
 
+**If this sounds useful — drop a star.** It's 18-year-old code, built in 21 days, battle-tested on 1.4B+ tokens. Every star tells me I'm not the only one who wants his AI to have a memory.
+
 ## What Makes It Different
 
 **Hand-Rolled BM25 Search, Smarter With Scale** — Zero dependencies. N-gram tokenizer. IDF scoring. Pure Python. The more you use it, the faster it gets — cache hit rate runs 98-99.5% in production. More tokens requested means higher hit rate, lower per-request cost. Written from scratch because "how hard can search be?"
@@ -147,6 +149,8 @@ pytest test_memory.py -v
 
 *Built by an 18-year-old who just wanted his AI to remember his name.*
 
-**[⭐ Star on GitHub](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Report a Bug](https://github.com/zhen85988-chen/synapse-core/issues)**
+**[⭐ Star on GitHub](https://github.com/zhen85988-chen/synapse-core)** · **[🐛 Report a Bug](https://github.com/zhen85988-chen/synapse-core/issues)** · **[👀 Watch for Updates](https://github.com/zhen85988-chen/synapse-core/watchers)**
+
+*If this project helps you, a star keeps me building. One click, zero cost, infinite motivation.*
 
 </div>
