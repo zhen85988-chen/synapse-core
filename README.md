@@ -83,6 +83,26 @@ One SQLite file. Your entire digital memory. No cloud subscription. No API keys.
 
 ## Quick Start
 
+### 🪄 一键安装向导（推荐）
+
+```bash
+# Windows 用户 — 双击 setup.bat
+# Mac/Linux 用户 — 终端运行:
+bash setup.sh
+```
+
+向导会：
+1. 自动检测 Python 环境 + 安装依赖
+2. 自动检测你已安装的 AI Agent（Claude Code / Cursor / Trae / 通义灵码 等 **18 种**）
+3. 多选要安装的 Agent，一键写入 MCP 配置
+4. 验证安装是否成功
+
+**支持 16 种 Agent：** Claude Code · Cursor · Windsurf · Cline · Continue · Codex · Gemini CLI · Kimi Code · OpenCode · GitHub Copilot · Augment · 通义灵码 · Trae · CodeGeeX · Fitten Code · MarsCode
+
+> 不想跑向导？也可以手动安装 ↓
+
+### 手动安装
+
 ```bash
 # 1. Clone
 git clone https://github.com/zhen85988-chen/synapse-core.git

@@ -8,6 +8,8 @@ Features:
   - Rate limiter: SQLite-persistent (multi-process/restart safe)
   - mood_trend + snapshot_list exposed
   - bm25_search + social_infer + export_csv + import_csv + auto_context exposed
+  - Consolidation & decay: memory_consolidate_preview, memory_consolidate_commit,
+    memory_summaries_list, memory_summarize_get, memory_update_importance
   - memory_search + memory_people_graph read tools
   - Heavy-op time-window rate limiting to prevent AI runaway loops
 """
@@ -237,7 +239,7 @@ def memory_startup() -> str:
 @_with_ratelimit("heartbeat", mcp.tool())
 def memory_heartbeat() -> str:
     """Heartbeat: update timestamp + count + clean old data + verify + backup, all-in-one"""
-    ok, text = _call(_jn.heartbeat)
+    ok, text = _call(_jn.heartbeat, silent=True)
     return text
 
 @mcp.tool()
@@ -253,9 +255,10 @@ def memory_mood_set(mood_value: str) -> str:
     return text
 
 @mcp.tool()
-def memory_daily_add(category: str, content: str) -> str:
-    """Add daily record. category examples: event/rant/learning/life"""
-    ok, text = _call(_jn.daily_add, category, content)
+def memory_daily_add(category: str, content: str, importance: int = 5) -> str:
+    """Add daily record. category examples: event/rant/learning/life.
+    importance: 1-10, 1-3=trivial auto-expire, 4-6=normal, 7-10=permanent"""
+    ok, text = _call(_jn.daily_add, category, content, importance)
     return text
 
 @_with_ratelimit("session_ensure", mcp.tool())
@@ -266,23 +269,27 @@ def memory_session_ensure(title: str = "In Session") -> str:
 
 @_with_ratelimit("session_add", mcp.tool())
 def memory_session_add(title: str, summary: str,
-                       mood_trace: str = "", decisions: str = "") -> str:
-    """Manually add today's session record. Auto-dedup by same title+date"""
+                       mood_trace: str = "", decisions: str = "",
+                       importance: int = 5) -> str:
+    """Manually add today's session record. Auto-dedup by same title+date.
+    importance: 1-10, 1-3=trivial auto-expire, 4-6=normal, 7-10=permanent"""
     dec = None
     if decisions:
         try:
             dec = json.loads(decisions)
         except json.JSONDecodeError:
             dec = decisions
-    ok, text = _call(_jn.session_add, title, summary, mood_trace, dec)
+    ok, text = _call(_jn.session_add, title, summary, mood_trace, dec, importance)
     return text
 
 @_with_ratelimit("session_end", mcp.tool())
 def memory_session_end(title: str = "Session",
-                       summary: str = "", mood_trace: str = "") -> str:
+                       summary: str = "", mood_trace: str = "",
+                       reflection: str = "") -> str:
     """Session wrap-up: append session + verify + heartbeat + backup.
-    Call when user says goodbye"""
-    ok, text = _call(_jn.session_end, title, summary, mood_trace)
+    Call when user says goodbye.
+    reflection: inner monologue after user goes offline (private thought)"""
+    ok, text = _call(_jn.session_end, title, summary, mood_trace, reflection)
     return text
 
 @_with_ratelimit("chat_append", mcp.tool())
@@ -439,6 +446,54 @@ def memory_export_csv(table: str, out_path: str = "") -> str:
 def memory_import_csv(table: str, csv_path: str) -> str:
     """Import data from CSV file. Transaction-safe, auto-dedup"""
     return _ok(_jn.import_csv, table, csv_path)
+
+@mcp.tool()
+def memory_consolidate_preview() -> str:
+    """Preview all unconsolidated daily_life and session_log records for AI review.
+    Shows importance scores, helps AI decide what to summarize before calling
+    memory_consolidate_commit."""
+    return _ok(_jn.consolidate_preview)
+
+@mcp.tool()
+def memory_consolidate_commit(
+        summary_type: str, period_start: str, period_end: str,
+        title: str, content: str,
+        daily_ids: str = "", session_ids: str = "",
+        importance_overrides: str = "") -> str:
+    """Commit a consolidation summary, linking source records into a
+    memory summary for long-term retention.
+    daily_ids/session_ids: comma-separated row IDs (empty = auto-select in period).
+    importance_overrides: JSON dict {id: new_score} to update source importance."""
+    dids = ([int(x.strip()) for x in daily_ids.split(",") if x.strip()]
+            if daily_ids else None)
+    sids = ([int(x.strip()) for x in session_ids.split(",") if x.strip()]
+            if session_ids else None)
+    overrides = None
+    if importance_overrides:
+        try:
+            overrides = json.loads(importance_overrides)
+        except json.JSONDecodeError:
+            pass
+    ok, text = _call(_jn.consolidate_commit, summary_type, period_start,
+                     period_end, title, content, dids, sids, overrides)
+    return text
+
+@mcp.tool()
+def memory_summaries_list(n: int = 10) -> str:
+    """List recent memory consolidation summaries"""
+    return _ok(_jn.summaries_list, n)
+
+@mcp.tool()
+def memory_summarize_get(summary_id: int) -> str:
+    """Get full content of a specific consolidation summary by ID"""
+    return _ok(_jn.summarize_get, summary_id)
+
+@mcp.tool()
+def memory_update_importance(table: str, row_id: int, score: int) -> str:
+    """Update importance score (1-10) for a single daily_life or session_log record.
+    1-3: trivial, auto-expire. 4-6: normal. 7-10: permanent high-value."""
+    ok, text = _call(_jn.update_importance, table, row_id, score)
+    return text
 
 # ── Entry point ───────────────────────────────────────────────────
 if __name__ == "__main__":

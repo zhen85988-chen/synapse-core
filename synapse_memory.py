@@ -20,6 +20,8 @@ Features:
   11. Rate limiter — SQLite-persistent, multi-process safe
   12. Snapshot — Git-like versioning, interactive restore
   13. Mood trend analysis — emotional keyword resonance word cloud
+  14. Memory consolidation — importance scoring (1-10), weekly/monthly summarization,
+      low-score auto-expiry, high-score permanent retention, consolidated source GC
 """
 
 import sqlite3
@@ -61,7 +63,10 @@ SESSION_LOG_KEEP_LIMIT = 15
 
 @contextmanager
 def get_db():
-    """Context manager that ensures connection is properly closed on exceptions."""
+    """Context manager that ensures connection is properly closed on exceptions.
+    Auto-initializes database on first use (lazy init)."""
+    if not os.path.exists(DB_PATH):
+        init_db()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -258,31 +263,302 @@ def quick_ref():
   Tasks: {tasks}
 """)
 
-# ── heartbeat (all-in-one) ────────────────────────────────────────
+# ── export / import / search (see below) ─────────────────────────────
 
-def heartbeat():
-    """Heartbeat: timestamp + cleanup + VACUUM + versioned backup."""
+# ── smart_auto_context (see below) ─────────────────────────────────
+
+# ── memory consolidation & decay ────────────────────────────────────
+
+def _importance_label(score):
+    """Human-readable importance tier."""
+    if score >= 9: return "critical"
+    if score >= 7: return "high"
+    if score >= 5: return "medium"
+    if score >= 3: return "low"
+    return "trivial"
+
+def consolidate_preview():
+    """Return all unconsolidated daily_life and session_log records for AI review.
+    Grouped by source table, ordered by date, with importance shown."""
+    daily_rows = _get_all(
+        "SELECT id, event_date, category, content, importance FROM daily_life "
+        "WHERE consolidated_to IS NULL ORDER BY event_date DESC, id DESC")
+    session_rows = _get_all(
+        "SELECT id, session_date, title, summary, importance FROM session_log "
+        "WHERE consolidated_to IS NULL ORDER BY session_date DESC, id DESC")
+
+    if not daily_rows and not session_rows:
+        print("(all records consolidated, nothing to preview)")
+        return
+
+    print(f"\n=== Consolidation Preview ===")
+    print(f"Unconsolidated: {len(daily_rows)} daily + {len(session_rows)} session records\n")
+
+    if daily_rows:
+        print("-- daily_life --")
+        for r in daily_rows:
+            imp = r["importance"]
+            label = _importance_label(imp)
+            print(f"  [#{r['id']}] [{r['event_date']}] [{r['category']}] "
+                  f"(imp={imp}/{label}) {r['content'][:120]}")
+        print()
+
+    if session_rows:
+        print("-- session_log --")
+        for r in session_rows:
+            imp = r["importance"]
+            label = _importance_label(imp)
+            body = (r["summary"] or "")[:120]
+            print(f"  [#{r['id']}] [{r['session_date']}] {r['title'] or '?'} "
+                  f"(imp={imp}/{label}) {body}")
+        print()
+
+    # Suggest consolidation windows
+    all_dates = set()
+    for r in daily_rows:
+        all_dates.add(r["event_date"])
+    for r in session_rows:
+        all_dates.add(r["session_date"])
+    if all_dates:
+        sorted_dates = sorted(all_dates)
+        print(f"Date range: {sorted_dates[0]} ~ {sorted_dates[-1]} "
+              f"({len(all_dates)} distinct dates)")
+        print(f"Suggested summary_type: "
+              f"{'monthly' if len(all_dates) > 7 else 'weekly'}")
+
+def consolidate_commit(summary_type, period_start, period_end,
+                       title, content, daily_ids=None, session_ids=None,
+                       importance_overrides=None):
+    """Commit a consolidation summary, linking source records.
+
+    Args:
+        summary_type: 'weekly', 'monthly', or 'custom'
+        period_start, period_end: date range strings YYYY-MM-DD
+        title: summary title
+        content: summary content (AI-generated)
+        daily_ids: list of daily_life IDs to link (or None = auto in period)
+        session_ids: list of session_log IDs to link (or None = auto in period)
+        importance_overrides: dict {id: new_score} to update source importance
+    """
+    if importance_overrides is None:
+        importance_overrides = {}
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+
+        # Auto-select unconsolidated IDs in period if not provided
+        if daily_ids is None:
+            d_rows = conn.execute(
+                "SELECT id FROM daily_life "
+                "WHERE consolidated_to IS NULL AND event_date BETWEEN ? AND ?",
+                (period_start, period_end)
+            ).fetchall()
+            daily_ids = [r["id"] for r in d_rows]
+
+        if session_ids is None:
+            s_rows = conn.execute(
+                "SELECT id FROM session_log "
+                "WHERE consolidated_to IS NULL AND session_date BETWEEN ? AND ?",
+                (period_start, period_end)
+            ).fetchall()
+            session_ids = [r["id"] for r in s_rows]
+
+        if not daily_ids and not session_ids:
+            conn.rollback()
+            conn.close()
+            print("[SKIP] No records found in period to consolidate")
+            return True
+
+        # Calculate source metadata
+        source_count = len(daily_ids) + len(session_ids)
+
+        total_imp = 0
+        imp_count = 0
+        for did in daily_ids:
+            imp = importance_overrides.get(f"d_{did}") or importance_overrides.get(did)
+            if imp is not None:
+                conn.execute("UPDATE daily_life SET importance=? WHERE id=?",
+                             (imp, did))
+                total_imp += imp
+            else:
+                row = conn.execute(
+                    "SELECT importance FROM daily_life WHERE id=?", (did,)
+                ).fetchone()
+                total_imp += row["importance"] if row else 5
+            imp_count += 1
+
+        for sid in session_ids:
+            imp = importance_overrides.get(f"s_{sid}") or importance_overrides.get(sid)
+            if imp is not None:
+                conn.execute("UPDATE session_log SET importance=? WHERE id=?",
+                             (imp, sid))
+                total_imp += imp
+            else:
+                row = conn.execute(
+                    "SELECT importance FROM session_log WHERE id=?", (sid,)
+                ).fetchone()
+                total_imp += row["importance"] if row else 5
+            imp_count += 1
+
+        importance_avg = round(total_imp / imp_count, 1) if imp_count > 0 else 5.0
+
+        # Insert summary
+        daily_json = json.dumps(daily_ids, ensure_ascii=False)
+        session_json = json.dumps(session_ids, ensure_ascii=False)
+
+        conn.execute(
+            "INSERT INTO summaries(summary_type,period_start,period_end,"
+            "title,content,source_count,importance_avg,daily_ids,session_ids) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (summary_type, period_start, period_end, title, content,
+             source_count, importance_avg, daily_json, session_json))
+        summary_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        # Mark sources as consolidated
+        for did in daily_ids:
+            conn.execute(
+                "UPDATE daily_life SET consolidated_to=? WHERE id=?",
+                (summary_id, did))
+        for sid in session_ids:
+            conn.execute(
+                "UPDATE session_log SET consolidated_to=? WHERE id=?",
+                (summary_id, sid))
+
+        # Garbage-collect low-score consolidated records (importance <= 2)
+        # that are older than 7 days — they were archived, now safe to delete
+        gc_daily = conn.execute(
+            "DELETE FROM daily_life "
+            "WHERE consolidated_to IS NOT NULL AND importance <= 2 "
+            "AND event_date < date('now', '-7 days')"
+        ).rowcount
+        gc_session = conn.execute(
+            "DELETE FROM session_log "
+            "WHERE consolidated_to IS NOT NULL AND importance <= 2 "
+            "AND session_date < date('now', '-7 days')"
+        ).rowcount
+
+        # Update state
+        n = _now()
+        conn.execute(
+            "INSERT OR REPLACE INTO state(key,value,updated_at) "
+            "VALUES('last_consolidation',?,?)", (n, n))
+        conn.execute(
+            "INSERT OR REPLACE INTO state(key,value,updated_at) "
+            "VALUES('system_version','1.1.0',?)", (n,))
+
+        conn.commit()
+
+        _ok(f"Consolidation committed: [{summary_type}] {title} "
+            f"(summary_id={summary_id}, sources={source_count}, "
+            f"imp_avg={importance_avg})")
+        if gc_daily or gc_session:
+            print(f"[GC] Cleaned {gc_daily} daily + {gc_session} session "
+                  f"low-score consolidated records")
+        return True
+
+    except Exception as e:
+        conn.rollback()
+        _err(f"Consolidation commit failed, all rolled back: {e}")
+        return False
+    finally:
+        conn.close()
+
+def summaries_list(n=10):
+    """List recent summaries."""
+    rows = _get_all(
+        "SELECT id, summary_type, period_start, period_end, title, "
+        "source_count, importance_avg, created_at "
+        "FROM summaries ORDER BY created_at DESC LIMIT ?", n)
+    if not rows:
+        print("(no summaries yet)")
+        return
+    for r in rows:
+        print(f"[{r['summary_type']}] {r['period_start']} ~ {r['period_end']} "
+              f"#{r['id']} {r['title']} "
+              f"(sources={r['source_count']}, imp_avg={r['importance_avg']})")
+
+def summarize_get(summary_id):
+    """Get full content of a specific summary by ID."""
+    r = _get_one("SELECT * FROM summaries WHERE id=?", summary_id)
+    if not r:
+        print(f"Summary #{summary_id} not found")
+        return
+    print(f"Title: {r['title']}")
+    print(f"Type: {r['summary_type']} | Period: {r['period_start']} ~ {r['period_end']}")
+    print(f"Sources: {r['source_count']} | Avg importance: {r['importance_avg']}")
+    print(f"Created: {r['created_at']}")
+    print()
+    print(r['content'])
+    print()
+    if r['daily_ids']:
+        try:
+            dids = json.loads(r['daily_ids'])
+            print(f"Daily IDs: {len(dids)} -> {dids}")
+        except json.JSONDecodeError:
+            pass
+    if r['session_ids']:
+        try:
+            sids = json.loads(r['session_ids'])
+            print(f"Session IDs: {len(sids)} -> {sids}")
+        except json.JSONDecodeError:
+            pass
+
+def update_importance(table, row_id, new_score):
+    """Update importance score for a single daily_life or session_log record.
+    table: 'daily_life' or 'session_log'"""
+    if table not in ("daily_life", "session_log"):
+        _err(f"Invalid table: {table}")
+        return False
+    if not isinstance(new_score, int) or new_score < 1 or new_score > 10:
+        _err(f"Importance must be 1-10, got {new_score}")
+        return False
+    _exec(f"UPDATE {table} SET importance=? WHERE id=?", new_score, row_id)
+    _ok(f"{table}#{row_id} importance -> {new_score}")
+    return True
+
+# ── heartbeat (upgraded with consolidation-aware cleanup) ───────────
+
+def heartbeat(silent=False):
+    """Heartbeat: timestamp + cleanup + VACUUM + versioned backup.
+    Cleanup respects importance scoring: high-score (>=7) permanent,
+    medium (4-6) kept until consolidated then GCed, low (<=3) deleted on expiry.
+    silent=True suppresses all stdout output (for scheduled/background use)."""
     n = _now()
     with get_db() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO state(key,value,updated_at) VALUES('last_heartbeat',?,?)",
             (n, n))
         conn.execute("INSERT INTO heartbeat_log(heartbeat_at) VALUES(?)", (n,))
-        # P2 cleanup: daily_life retention and session_log cap
+        # Tiered cleanup respecting importance tiers
+        # Tier 1: low-score (<=3) daily_life — delete on expiry
         conn.execute(
-            "DELETE FROM daily_life WHERE event_date < date('now', ?)",
+            "DELETE FROM daily_life WHERE importance <= 3 "
+            "AND event_date < date('now', ?)",
             (f'-{DAILY_LIFE_RETENTION_DAYS} days',))
+        # Tier 2: medium-score (4-6) — delete only if consolidated, after retention
+        conn.execute(
+            "DELETE FROM daily_life WHERE importance BETWEEN 4 AND 6 "
+            "AND consolidated_to IS NOT NULL "
+            "AND event_date < date('now', ?)",
+            (f'-{DAILY_LIFE_RETENTION_DAYS} days',))
+        # Tier 3: high-score (>=7) — never auto-delete
         conn.execute("""
             DELETE FROM session_log
-            WHERE id NOT IN (
+            WHERE importance <= 3
+            AND id NOT IN (
                 SELECT id FROM session_log ORDER BY session_date DESC, id DESC LIMIT ?
             )
         """, (SESSION_LOG_KEEP_LIMIT,))
         cur_ver = conn.execute(
             "SELECT value FROM state WHERE key='system_version'").fetchone()
-        if cur_ver and cur_ver["value"] != "1.0.0":
+        if cur_ver and cur_ver["value"] != "1.1.0":
             conn.execute(
-                "UPDATE state SET value='1.0.0', updated_at=? WHERE key='system_version'",
+                "UPDATE state SET value='1.1.0', updated_at=? WHERE key='system_version'",
                 (n,))
         conn.commit()
     # VACUUM after DELETE to reclaim disk space
@@ -294,8 +570,9 @@ def heartbeat():
     backup_all()
     # verification
     ok_ = verify_schema() and verify_integrity()
-    if ok_:
-        _ok(f"Heartbeat OK | count={cnt} | backup updated")
+    if not silent:
+        if ok_:
+            _ok(f"Heartbeat OK | count={cnt} | backup updated")
     return ok_
 
 # ── startup (one-shot self-check) ─────────────────────────────────
@@ -315,7 +592,7 @@ def startup():
     all_state = state_get_all()
     # 4. Cross-check: system_version consistency
     db_ver = all_state.get("system_version", "")
-    expected = "1.0.0"
+    expected = "1.1.0"
     if db_ver != expected:
         if first_run:
             print(f"[OK] First run, version initialized to {expected} (DB={db_ver})")
@@ -347,15 +624,15 @@ def startup():
 
 # ── daily ─────────────────────────────────────────────────────────
 
-def daily_add(category, content):
+def daily_add(category, content, importance=5):
     _exec(
-        "INSERT INTO daily_life(event_date,category,content) VALUES(?,?,?)",
-        (_today(), category, content))
+        "INSERT INTO daily_life(event_date,category,content,importance) VALUES(?,?,?,?)",
+        (_today(), category, content, importance))
     r = _get_one(
         "SELECT id FROM daily_life WHERE event_date=? AND category=? AND content=?",
         _today(), category, content)
     if r:
-        _ok(f"daily written: [{category}] {content[:40]}...")
+        _ok(f"daily written: [{category}] {content[:40]}... (importance={importance})")
         return True
     _err("daily write verification failed")
     return False
@@ -400,7 +677,7 @@ def chat_append(text):
         (f"[{ts}] {text}", _today()))
     return True
 
-def session_add(title, summary, mood_trace="", decisions=None):
+def session_add(title, summary, mood_trace="", decisions=None, importance=5):
     """Add session record with dedup check (skip if same title+date exists)."""
     existing = _get_one(
         "SELECT id FROM session_log WHERE session_date=? AND title=?",
@@ -409,15 +686,15 @@ def session_add(title, summary, mood_trace="", decisions=None):
         print(f"[SKIP] session already exists: {title}")
         return True
     _exec(
-        "INSERT INTO session_log(session_date,title,summary,mood_trace,decisions) "
-        "VALUES(?,?,?,?,?)",
+        "INSERT INTO session_log(session_date,title,summary,mood_trace,decisions,importance) "
+        "VALUES(?,?,?,?,?,?)",
         (_today(), title, summary, mood_trace,
-         json.dumps(decisions or [], ensure_ascii=False)))
+         json.dumps(decisions or [], ensure_ascii=False), importance))
     r = _get_one(
         "SELECT id FROM session_log WHERE session_date=? AND title=?",
         _today(), title)
     if r:
-        _ok(f"session written: {title}")
+        _ok(f"session written: {title} (importance={importance})")
         return True
     _err("session write verification failed")
     return False
@@ -433,10 +710,11 @@ def session_recent(n=15):
             print(f"- Mood: {r['mood_trace']}")
         print()
 
-def session_end(title="Session", summary="", mood_trace=""):
+def session_end(title="Session", summary="", mood_trace="", reflection=""):
     """Atomic session wrap-up.
     All DB writes in single transaction -- rollback on any failure.
     Auto-merge temporary records from chat_append, no summary loss.
+    reflection: inner monologue stored to state, recalled by startup next session.
     Backup (file-level op) runs after successful COMMIT."""
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -498,9 +776,9 @@ def session_end(title="Session", summary="", mood_trace=""):
         """, (SESSION_LOG_KEEP_LIMIT,))
         cur_ver = conn.execute(
             "SELECT value FROM state WHERE key='system_version'").fetchone()
-        if cur_ver and cur_ver["value"] != "1.0.0":
+        if cur_ver and cur_ver["value"] != "1.1.0":
             conn.execute(
-                "UPDATE state SET value='1.0.0', updated_at=? WHERE key='system_version'",
+                "UPDATE state SET value='1.1.0', updated_at=? WHERE key='system_version'",
                 (n,))
         cnt = int((conn.execute(
             "SELECT value FROM state WHERE key='heartbeat_count'"
@@ -835,7 +1113,14 @@ def smart_auto_context(user_input: str) -> str:
     Engine 1: Entity trigger exact match (instant).
     Engine 2: BM25 full-db semantic match (people/contests/gaming/daily/session),
               auto-associate user input with relevant memories.
-    min_score=0.5 threshold filters weak relevance noise."""
+    min_score=0.5 threshold filters weak relevance noise.
+
+    Memory fuzzing: older (>7d) low-importance (<6) memories get their
+    specific details fuzzed — dates become "前阵子", names blur, details
+    soften. This mimics human memory decay. High-score memories stay sharp."""
+    import random as _random
+    from datetime import datetime as _dt, timedelta as _td
+
     if not user_input or not user_input.strip():
         return ""
 
@@ -885,49 +1170,104 @@ def smart_auto_context(user_input: str) -> str:
                         f"  [{r['status']}] {r['name']} | "
                         f"deadline: {r['deadline']} | role: {r['role'] or 'member'}")
 
-    # Engine 2: BM25 full-db semantic fallback
+    # ── Memory fuzzing helper ──────────────────────────────────────
+    def _fuzz_memory(text, event_date, importance):
+        """Probabilistic fuzz: older + lower importance → more blur.
+        Returns (fuzzed_text, was_fuzzed)."""
+        if importance is None or importance >= 6:
+            return text, False
+        if not event_date:
+            return text, False
+        try:
+            days_old = (_dt.now() - _dt.strptime(event_date, "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            return text, False
+        if days_old <= 7:
+            return text, False
+
+        # Probability scales with age and inverse importance
+        fuzz_prob = min(0.9, (days_old / 60) * (1 - importance / 10))
+        if _random.random() > fuzz_prob:
+            return text, False
+
+        # Fuzz: replace specific details with vague ones
+        fuzzed = text
+        # Blur dates
+        fuzzed = re.sub(r'\d{4}-\d{2}-\d{2}', '前阵子', fuzzed)
+        fuzzed = re.sub(r'(周[一二三四五六日天])', '那天', fuzzed)
+        fuzzed = re.sub(r'(上周|下周|这周|本周)', '前阵子', fuzzed)
+        fuzzed = re.sub(r'(昨天|今天|明天)', '那天', fuzzed)
+        # Add fuzz marker so AI knows this is a degraded memory
+        if fuzzed != text:
+            fuzzed = f"[模糊记忆] " + fuzzed
+        return fuzzed, fuzzed != text
+
+    # Engine 2: BM25 full-db semantic fallback (with fuzzing)
     bm25_hits = []
     tables_config = [
         ("daily_life",
-         "id, content || ' [' || category || ']' AS text",
-         "Daily", " ORDER BY id DESC LIMIT 200"),
+         "id, content || ' [' || category || ']' AS text, event_date, importance",
+         "Daily", " ORDER BY id DESC LIMIT 200",
+         True),   # has_fuzz_fields
         ("session_log",
-         "id, title || ' ' || COALESCE(summary,'') AS text",
-         "Session", " ORDER BY id DESC LIMIT 100"),
+         "id, title || ' ' || COALESCE(summary,'') AS text, session_date, importance",
+         "Session", " ORDER BY id DESC LIMIT 100",
+         True),
         ("people",
          "id, name || ' ' || COALESCE(relation,'') || ' ' || "
          "COALESCE(role,'') || ' ' || COALESCE(hometown,'') || ' ' || "
-         "COALESCE(notes,'') AS text",
-         "People", ""),
+         "COALESCE(notes,'') AS text, NULL, NULL",
+         "People", "",
+         False),  # no fuzz for people
         ("gaming",
          "game_name AS id, game_name || ' ' || COALESCE(platform,'') || ' ' || "
-         "COALESCE(progress,'') || ' ' || COALESCE(highlights,'') AS text",
-         "Gaming", ""),
+         "COALESCE(progress,'') || ' ' || COALESCE(highlights,'') AS text, NULL, NULL",
+         "Gaming", "",
+         False),
         ("contests",
          "id, name || ' ' || COALESCE(role,'') || ' ' || "
-         "COALESCE(status,'') || ' ' || COALESCE(deadline,'') AS text",
-         "Contest", ""),
+         "COALESCE(status,'') || ' ' || COALESCE(deadline,'') AS text, NULL, NULL",
+         "Contest", "",
+         False),
     ]
-    for table, fields, label, order_limit in tables_config:
+    for config in tables_config:
+        table, fields, label, order_limit = config[:4]
+        has_fuzz = config[4] if len(config) > 4 else False
         rows = _get_all(f"SELECT {fields} FROM {table}{order_limit}")
         if rows:
-            ranker = SuperMemoryRanker(
-                [(r["id"], r["text"], {"label": label, "text": r["text"]})
-                 for r in rows])
+            # Build corpus with fuzzing applied
+            corpus = []
+            for r in rows:
+                raw_text = r["text"]
+                if has_fuzz:
+                    date_field = (r["event_date"] if "event_date" in r.keys()
+                                  else r.get("session_date"))
+                    imp = r.get("importance")
+                    fuzzed_text, was_fuzzed = _fuzz_memory(raw_text, date_field, imp)
+                    corpus.append((r["id"], fuzzed_text,
+                                   {"label": label, "text": fuzzed_text,
+                                    "fuzzed": was_fuzzed}))
+                else:
+                    corpus.append((r["id"], raw_text,
+                                   {"label": label, "text": raw_text,
+                                    "fuzzed": False}))
+            ranker = SuperMemoryRanker(corpus)
             hits = ranker.search(user_input, top_n=3, min_score=0.5)
             for doc_id, score, meta in hits:
                 bm25_hits.append(
-                    (meta.get("label", label), score, meta.get("text", "")))
+                    (meta.get("label", label), score, meta.get("text", ""),
+                     meta.get("fuzzed", False)))
 
     if bm25_hits:
         bm25_hits.sort(key=lambda x: x[1], reverse=True)
         shown = set()
-        for label, score, text in bm25_hits:
+        for label, score, text, was_fuzzed in bm25_hits:
             key = text[:80]
             if key in shown:
                 continue
             shown.add(key)
-            parts.append(f"[{label}] [score={score:.2f}] {text[:150]}")
+            fuzz_tag = " [fuzzed]" if was_fuzzed else ""
+            parts.append(f"[{label}] [score={score:.2f}]{fuzz_tag} {text[:150]}")
 
     if len(parts) == 1:
         return ""
@@ -1391,7 +1731,8 @@ INSERT INTO state VALUES ('heartbeat_count', '0', datetime('now','localtime'));
 INSERT INTO state VALUES ('today_plan', '', datetime('now','localtime'));
 INSERT INTO state VALUES ('active_projects', '', datetime('now','localtime'));
 INSERT INTO state VALUES ('pending_tasks', '', datetime('now','localtime'));
-INSERT INTO state VALUES ('system_version', '1.0.0', datetime('now','localtime'));
+INSERT INTO state VALUES ('system_version', '1.1.0', datetime('now','localtime'));
+INSERT INTO state VALUES ('last_consolidation', '', datetime('now','localtime'));
 
 CREATE TABLE entity_triggers (
     trigger_word TEXT PRIMARY KEY,
@@ -1491,6 +1832,8 @@ CREATE TABLE daily_life (
     event_date  TEXT NOT NULL,
     category    TEXT NOT NULL DEFAULT 'event',
     content     TEXT NOT NULL,
+    importance  INTEGER NOT NULL DEFAULT 5,
+    consolidated_to INTEGER DEFAULT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX idx_daily_date ON daily_life(event_date);
@@ -1502,9 +1845,27 @@ CREATE TABLE session_log (
     summary     TEXT,
     mood_trace  TEXT,
     decisions   TEXT,
+    importance  INTEGER NOT NULL DEFAULT 5,
+    consolidated_to INTEGER DEFAULT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX idx_session_date ON session_log(session_date);
+
+CREATE TABLE IF NOT EXISTS summaries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    summary_type    TEXT NOT NULL,
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    source_count    INTEGER NOT NULL DEFAULT 0,
+    importance_avg  REAL NOT NULL DEFAULT 5.0,
+    daily_ids       TEXT,
+    session_ids     TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_summaries_type ON summaries(summary_type);
+CREATE INDEX IF NOT EXISTS idx_summaries_period ON summaries(period_start, period_end);
 
 CREATE TABLE heartbeat_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1576,8 +1937,18 @@ def init_db():
 
     FTS5 virtual tables are created here (not in migrate) so new
     installs get them immediately."""
+    # Check if DB exists AND has tables (not an empty shell)
     if os.path.exists(DB_PATH):
-        return
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            tables = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='state'"
+            ).fetchone()
+            conn.close()
+            if tables:
+                return  # DB is properly initialized
+        except Exception:
+            pass  # DB corrupted or unreadable, re-init below
     schema_path = os.path.join(BASE_DIR, "schema.sql")
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -1653,23 +2024,75 @@ MIGRATIONS = [
             VALUES (new.rowid, new.session_date, new.title, new.summary);
         END;
     """),
+    ("1.1.0", """
+        -- Memory consolidation & decay: importance scoring + summaries table
+        -- (column additions handled idempotently in migrate())
+        CREATE TABLE IF NOT EXISTS summaries (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            summary_type    TEXT NOT NULL,
+            period_start    TEXT NOT NULL,
+            period_end      TEXT NOT NULL,
+            title           TEXT NOT NULL,
+            content         TEXT NOT NULL,
+            source_count    INTEGER NOT NULL DEFAULT 0,
+            importance_avg  REAL NOT NULL DEFAULT 5.0,
+            daily_ids       TEXT,
+            session_ids     TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_summaries_type ON summaries(summary_type);
+        CREATE INDEX IF NOT EXISTS idx_summaries_period ON summaries(period_start, period_end);
+
+        -- Record metadata state key
+        INSERT OR IGNORE INTO state(key,value,updated_at)
+        VALUES ('last_consolidation','',datetime('now','localtime'));
+    """),
 ]
 # For future features, append new migration to MIGRATIONS list
 
 def migrate():
-    """Versioned auto-upgrade skeleton.
+    """Versioned auto-upgrade.
     Read current version from state table, execute unapplied migration SQL in order,
     update system_version after each success. Already-applied steps auto-skipped.
-    Called automatically in startup()."""
+    Uses numeric version comparison (1.10.0 > 1.9.0) and column-existence checks
+    for idempotent safety."""
     current = state_get("system_version") or "0.1.0"
     upgraded = False
+
+    def _ver_num(v):
+        """Extract numeric version tuple: '1.1.0' -> (1, 1, 0)"""
+        try:
+            return tuple(int(p) for p in v.split('.'))
+        except Exception:
+            return (0,)
+
+    def _column_exists(table, column):
+        """Check if a column already exists in a table."""
+        with get_db() as conn:
+            cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            return column in cols
+
     for target_ver, sql in MIGRATIONS:
-        if current < target_ver:
+        if _ver_num(current) < _ver_num(target_ver):
             print(f"[MIGRATE] {current} -> {target_ver}")
             try:
-                with get_db() as conn:
-                    conn.executescript(sql)
-                    conn.commit()
+                # 1.1.0: idempotent column additions
+                if target_ver == "1.1.0":
+                    with get_db() as conn:
+                        if not _column_exists("daily_life", "importance"):
+                            conn.execute("ALTER TABLE daily_life ADD COLUMN importance INTEGER NOT NULL DEFAULT 5")
+                        if not _column_exists("daily_life", "consolidated_to"):
+                            conn.execute("ALTER TABLE daily_life ADD COLUMN consolidated_to INTEGER DEFAULT NULL")
+                        if not _column_exists("session_log", "importance"):
+                            conn.execute("ALTER TABLE session_log ADD COLUMN importance INTEGER NOT NULL DEFAULT 5")
+                        if not _column_exists("session_log", "consolidated_to"):
+                            conn.execute("ALTER TABLE session_log ADD COLUMN consolidated_to INTEGER DEFAULT NULL")
+                        conn.executescript(sql)  # summaries + indexes + state
+                        conn.commit()
+                else:
+                    with get_db() as conn:
+                        conn.executescript(sql)
+                        conn.commit()
                 state_set("system_version", target_ver)
                 current = target_ver
                 upgraded = True
@@ -2176,6 +2599,8 @@ def _build_parser():
     sub.add_parser("init", help="Initialize database")
     sub.add_parser("migrate", help="Migration helper")
     sub.add_parser("people-graph", help="Relationship inference")
+    sub.add_parser("summaries", help="List recent memory consolidation summaries")
+    sub.add_parser("consolidate-preview", help="Preview unconsolidated records before AI summary")
 
     # Optional single-arg commands
     p = sub.add_parser("mood", help="Get or set mood")
@@ -2282,6 +2707,26 @@ def _build_parser():
     p.add_argument("table", help="Table name (matching export-csv)")
     p.add_argument("csv_path", help="CSV file path")
 
+    # Consolidation commands
+    p = sub.add_parser("summarize-get", help="Get full content of a summary by ID")
+    p.add_argument("summary_id", type=int, help="Summary ID to fetch")
+
+    p = sub.add_parser("consolidate-commit", help="Commit AI-generated consolidation summary")
+    p.add_argument("summary_type", help="weekly/monthly/custom")
+    p.add_argument("period_start", help="YYYY-MM-DD start")
+    p.add_argument("period_end", help="YYYY-MM-DD end")
+    p.add_argument("title", help="Summary title")
+    p.add_argument("content", nargs="+", help="Summary content (AI-generated)")
+    p.add_argument("--daily-ids", default=None,
+                   help="Comma-separated daily_life IDs (omit=auto)")
+    p.add_argument("--session-ids", default=None,
+                   help="Comma-separated session_log IDs (omit=auto)")
+
+    p = sub.add_parser("update-importance", help="Update importance score for a record")
+    p.add_argument("table", help="daily_life or session_log")
+    p.add_argument("row_id", type=int, help="Row ID")
+    p.add_argument("score", type=int, help="New importance (1-10)")
+
     return parser
 
 def main():
@@ -2320,6 +2765,10 @@ def main():
         verify_integrity()
     elif cmd == "backup":
         backup_all()
+    elif cmd == "summaries":
+        summaries_list()
+    elif cmd == "consolidate-preview":
+        consolidate_preview()
     elif cmd == "init":
         init_db()
     elif cmd == "migrate":
@@ -2389,6 +2838,18 @@ def main():
         export_csv(args.table, args.out_path)
     elif cmd == "import-csv":
         import_csv(args.table, args.csv_path)
+    elif cmd == "summarize-get":
+        summarize_get(args.summary_id)
+    elif cmd == "consolidate-commit":
+        dids = ([int(x.strip()) for x in args.daily_ids.split(",") if x.strip()]
+                if getattr(args, 'daily_ids', None) else None)
+        sids = ([int(x.strip()) for x in args.session_ids.split(",") if x.strip()]
+                if getattr(args, 'session_ids', None) else None)
+        consolidate_commit(args.summary_type, args.period_start, args.period_end,
+                           args.title, ' '.join(args.content),
+                           daily_ids=dids, session_ids=sids)
+    elif cmd == "update-importance":
+        update_importance(args.table, args.row_id, args.score)
     else:
         parser.print_help()
 
