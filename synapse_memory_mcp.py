@@ -239,7 +239,7 @@ def memory_startup() -> str:
 def memory_heartbeat() -> str:
     """Heartbeat: update timestamp + count + clean old data + verify + backup, all-in-one"""
     ok, text = _call(_jn.heartbeat, silent=True)
-    return text
+    return text if text else "[OK]"
 
 @mcp.tool()
 def memory_state_set(key: str, value: str) -> str:

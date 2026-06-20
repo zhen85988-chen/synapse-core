@@ -104,12 +104,14 @@ def _norm(val):
     if isinstance(val, str) and val.strip().lower() in ('none', ''): return None
     return val
 
-def _ok(msg=""):
-    tag = f" {msg}" if msg else ""
-    print(f"[OK]{tag}")
+def _ok(msg="", silent=False):
+    if not silent:
+        tag = f" {msg}" if msg else ""
+        print(f"[OK]{tag}")
 
-def _err(msg):
-    print(f"[ERR] {msg}")
+def _err(msg, silent=False):
+    if not silent:
+        print(f"[ERR] {msg}")
     return False
 
 def _is_first_run():
@@ -120,7 +122,7 @@ def _is_first_run():
 
 # ── backup (versioned + retention) ────────────────────────────────
 
-def _cleanup_old_backups(keep=BACKUP_KEEP):
+def _cleanup_old_backups(keep=BACKUP_KEEP, silent=False):
     """Keep last N backups, delete older files."""
     os.makedirs(BACKUP_DIR, exist_ok=True)
     for prefix in ("synapse-core_",):
@@ -129,11 +131,12 @@ def _cleanup_old_backups(keep=BACKUP_KEEP):
         for old in files[keep:]:
             try:
                 os.remove(old)
-                print(f"[CLEAN] Removed old backup: {os.path.basename(old)}")
+                if not silent:
+                    print(f"[CLEAN] Removed old backup: {os.path.basename(old)}")
             except OSError:
                 pass
 
-def backup_db():
+def backup_db(silent=False):
     """Hot backup using sqlite3 built-in backup API, timestamped filename."""
     os.makedirs(BACKUP_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -145,22 +148,23 @@ def backup_db():
     finally:
         dst_conn.close()
         src_conn.close()
-    _ok(f"Database hot backup done synapse-core_{ts}.db")
+    if not silent:
+        _ok(f"Database hot backup done synapse-core_{ts}.db")
 
-def backup_all():
+def backup_all(silent=False):
     """Backup synapse_memory.db (hot backup, timestamped), auto-clean old."""
     ok = True
     os.makedirs(BACKUP_DIR, exist_ok=True)
     try:
-        backup_db()
+        backup_db(silent=silent)
     except Exception as e:
-        ok = _err(f"Backup db failed: {e}")
-    _cleanup_old_backups()
+        ok = _err(f"Backup db failed: {e}", silent=silent)
+    _cleanup_old_backups(silent=silent)
     return ok
 
 # ── verify ────────────────────────────────────────────────────────
 
-def verify_schema():
+def verify_schema(silent=False):
     """Check for garbage columns (table name sanitized, SQL injection proof)."""
     found = False
     with get_db() as conn:
@@ -175,21 +179,24 @@ def verify_schema():
             cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({safe_name})").fetchall()]
             for gc in garbage_cols:
                 if gc in cols:
-                    print(f"!! Garbage column: {t['name']}.{gc}")
+                    if not silent:
+                        print(f"!! Garbage column: {t['name']}.{gc}")
                     found = True
-    if not found:
+    if not found and not silent:
         _ok("Database clean")
     return not found
 
-def verify_integrity():
+def verify_integrity(silent=False):
     """Database integrity check."""
     with get_db() as conn:
         r = conn.execute("PRAGMA integrity_check").fetchone()
     ok = r[0] == "ok"
-    if ok:
-        _ok("Integrity OK")
-    else:
-        _err(f"Integrity failed: {r[0]}")
+    if not silent:
+        if ok:
+            _ok("Integrity OK")
+        else:
+            _err(f"Integrity failed: {r[0]}")
+    return ok
     return ok
 
 def verify_write(filepath):
@@ -567,9 +574,9 @@ def heartbeat(silent=False):
     cnt = int(state_get("heartbeat_count") or 0) + 1
     state_set("heartbeat_count", str(cnt))
     # versioned backup + auto-clean old
-    backup_all()
+    backup_all(silent=silent)
     # verification
-    ok_ = verify_schema() and verify_integrity()
+    ok_ = verify_schema(silent=silent) and verify_integrity(silent=silent)
     if not silent:
         if ok_:
             _ok(f"Heartbeat OK | count={cnt} | backup updated")
