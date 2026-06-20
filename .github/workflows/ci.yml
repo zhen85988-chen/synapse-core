@@ -19,8 +19,10 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install ruff
-      - run: ruff check .
+      - run: ruff check . --fix --show-fixes
       - run: ruff format --check .
+      - name: Fail if unfixed errors
+        run: ruff check . --output-format concise
 
   test:
     runs-on: ubuntu-latest

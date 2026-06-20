@@ -291,7 +291,7 @@ def consolidate_preview():
         print("(all records consolidated, nothing to preview)")
         return
 
-    print(f"\n=== Consolidation Preview ===")
+    print("\n=== Consolidation Preview ===")
     print(f"Unconsolidated: {len(daily_rows)} daily + {len(session_rows)} session records\n")
 
     if daily_rows:
@@ -1119,7 +1119,7 @@ def smart_auto_context(user_input: str) -> str:
     specific details fuzzed — dates become "前阵子", names blur, details
     soften. This mimics human memory decay. High-score memories stay sharp."""
     import random as _random
-    from datetime import datetime as _dt, timedelta as _td
+    from datetime import datetime as _dt
 
     if not user_input or not user_input.strip():
         return ""
@@ -1199,7 +1199,7 @@ def smart_auto_context(user_input: str) -> str:
         fuzzed = re.sub(r'(昨天|今天|明天)', '那天', fuzzed)
         # Add fuzz marker so AI knows this is a degraded memory
         if fuzzed != text:
-            fuzzed = f"[模糊记忆] " + fuzzed
+            fuzzed = "[模糊记忆] " + fuzzed
         return fuzzed, fuzzed != text
 
     # Engine 2: BM25 full-db semantic fallback (with fuzzing)
@@ -1350,7 +1350,7 @@ def infer_social_network(target_person: str):
                     print(f"  [{deg}] {target_person} <-> {neighbor} (score: {new_w:.2f})")
 
     if not has_conn:
-        print(f"  (no indirect connections found)")
+        print("  (no indirect connections found)")
 
 
 # ── mood / snapshot / memory-anchor engines ─────────────────────
@@ -1385,7 +1385,7 @@ def analyze_mood_trend():
     total = total_pos + total_neg
     ratio = total_pos / total if total > 0 else 0.5
     avg_mood = ratio
-    print(f"\n[Mood trend analysis]")
+    print("\n[Mood trend analysis]")
     print("=" * 55)
     print(f"  Energy index: {avg_mood * 100:.1f}% (0~100)")
     status = ("Excellent" if avg_mood > 0.7

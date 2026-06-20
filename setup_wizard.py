@@ -14,8 +14,6 @@ import sys
 import os
 import json
 import subprocess
-import platform
-import shutil
 from pathlib import Path
 
 # ── Fix Windows encoding ──────────────────────────────────────────────
